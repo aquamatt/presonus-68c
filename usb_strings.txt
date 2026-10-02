@@ -1,0 +1,27 @@
+device 194f:010b at /dev/bus/usb/003/012, langid 0x0409
+  1  PreSonus
+  2  0132B680
+  3  Studio 68c
+  4  Studio 68c 
+  5  Studio 68c 
+  6  Studio 68c 
+  7  Studio 68c 
+  8  PreSonus Clock Selector
+  9  PreSonus Internal Clock
+ 10  PreSonus S/PDIF Clock
+ 11  PreSonus DFU
+ 12  PreSonus MIDI Out
+ 13  PreSonus MIDI In
+ 14  Main Out Left
+ 15  Main Out Right
+ 16  Line Out 3
+ 17  Line Out 4
+ 18  S/PDIF Out Left
+ 19  S/PDIF Out Right
+ 20  Mic/Inst/Line 1
+ 21  Mic/Inst/Line 2
+ 22  Mic/Line 3
+ 23  Mic/Line 4
+ 24  S/PDIF In Left
+ 25  S/PDIF In Right
+ 26  iAP Interface
