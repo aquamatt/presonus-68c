@@ -35,7 +35,9 @@ writing a new driver.
 - The fix is PipeWire's Pro Audio profile, which on its own exposes all six inputs and all six
   outputs (step 3 of [Setting it up from scratch](#setting-it-up-from-scratch)). On top of it,
   this setup adds a mono "Studio 68c Call Mic" input for calls, REAPER started through
-  `pw-jack`, and `vc_connect.sh` for recording call and browser audio in REAPER.
+  `pw-jack`, `vc_connect.sh` for recording call and browser audio in REAPER, and
+  `phone_connect.sh` for recording calls made on my Android phone, which connects to the
+  computer over Bluetooth as a hands-free kit.
 
 The rest of this document describes how the 68c is set up on my machine (Ubuntu 24.04.5) as of
 01/10/2026, how to rebuild that setup, and what to check after moving to Ubuntu 26.04 or later.
@@ -87,6 +89,10 @@ According to the owner's manual, the front panel works in hardware only:
     REAPER in1-in6, through pw-jack
 
     Chrome, Zoom, Zen -> "Vidconf to REAPER" (vc_connect.sh) -> REAPER in7/in8
+
+    Android phone, over Bluetooth:
+      far end of a call -> "Phone to REAPER" (phone_connect.sh) -> REAPER in9
+      "Studio 68c Call Mic" -> the phone
 ```
 
 ### Driver
@@ -143,7 +149,7 @@ and was close to silent.
 
 ### REAPER
 
-REAPER uses JACK for audio, with 8 inputs and 6 outputs, and is started with `pw-jack` in front
+REAPER uses JACK for audio, with 9 inputs and 6 outputs, and is started with `pw-jack` in front
 of its command. `pw-jack` points REAPER at PipeWire's JACK library, so REAPER shares the 68c
 with calls and desktop sound. Without it, REAPER would load the system JACK library, which on
 this machine is the real JACK from `jackd2`, and look for a real JACK server. A JACK server
@@ -151,8 +157,10 @@ holds its interface exclusively, shutting PipeWire out. Other JACK programs used
 REAPER need the same prefix.
 
 REAPER connects its inputs automatically, in order: in1-in6 to the 68c's six inputs, and
-in7/in8 to the built-in analogue input until `vc_connect.sh` re-wires them. I have not checked
-where its outputs connect; with REAPER running, `pw-link -l` lists them.
+in7/in8 to the built-in analogue input until `vc_connect.sh` re-wires them. in9 is for the
+phone; I have not checked what REAPER connects it to on its own, and `phone_connect.sh`
+removes any such connection. With REAPER running on 02/10/2026, its outputs out1-out6 were
+connected to the 68c's six outputs in order; with REAPER running, `pw-link -l` lists them.
 
 ### Recording call and browser audio in REAPER
 
@@ -178,6 +186,51 @@ if REAPER monitors in7/in8. Run the script again whenever REAPER restarts its au
 because REAPER then recreates its ports. If browser audio goes silent after a recording
 session, the routing is probably still in place: run `vc_connect.sh -k`.
 
+### Recording phone calls in REAPER
+
+My Android phone is paired with the computer over Bluetooth, and the computer acts as the
+phone's hands-free kit, as a car kit would. PipeWire provides that role by itself with
+WirePlumber's default settings, so nothing needs installing or configuring for it. During a
+call, PipeWire creates two mono streams for the phone: the far end, which WirePlumber plays on
+the default output, and the stream to the phone, which it feeds from the default input, the
+call mic.
+
+`phone_connect.sh` sends the far end into REAPER. Run with REAPER open, it:
+
+1. finds the phone, the one paired device that Bluetooth lists as a phone, and connects it
+   unless it is connected already.
+2. creates a virtual output, "Phone to REAPER" (node `phone_to_reaper`), and connects it to
+   REAPER in9, removing any other connection to in9.
+3. waits for a call to start, then moves its far end into "Phone to REAPER". Up to a second
+   of the call plays on the default output first.
+
+in9 then carries the phone alone, and the far end is audible only if REAPER monitors in9.
+My voice needs no routing: it reaches the phone from the call mic, and REAPER records it on
+in4.
+
+WirePlumber remembers the move, so later calls reach REAPER without running the script again.
+It files the move under the stream's role, "Communication", so while "Phone to REAPER" exists,
+any other program that plays with that role lands there too.
+
+`phone_connect.sh -k` sends a call in progress back to the default output, removes "Phone to
+REAPER" and disconnects the phone, which while connected sends every call to the computer.
+Run the script again whenever REAPER restarts its audio engine. `phone_connect.sh -h` lists
+the environment variables that change its behaviour.
+
+About Bluetooth calls:
+
+- The audio is mono, at 8 kHz (CVSD) or 16 kHz (mSBC). The far-end track sounds like a phone
+  call whatever the computer does; only my side is recorded at full quality.
+- Calls are answered and ended on the phone. On Ubuntu 24.04 nothing on the computer can do
+  it, because PipeWire 1.0.5 has no call-control interface.
+- While the phone is connected, its other sound, such as music and notifications, plays on
+  the default output, unless "Media audio" is turned off for the computer in the phone's
+  Bluetooth settings.
+- The phone's call-volume buttons change the far end's level before it reaches REAPER, in
+  15 steps: step n gives (n/15)^3 of full level, so one step below maximum is about -1.8 dB
+  and step 8 about -16 dB. I keep the call volume at maximum when recording.
+- Not yet tested with a call (02/10/2026).
+
 ## Files
 
 | Location | Purpose | Copy in this project |
@@ -186,8 +239,9 @@ session, the routing is probably still in place: run `vc_connect.sh -k`.
 | `~/.local/state/wireplumber/default-nodes` | Saved default output and input. Written by WirePlumber. | none |
 | `~/.local/state/wireplumber/restore-stream` | Per-program output choices, including those `vc_connect.sh` makes. Written by WirePlumber. | none |
 | `~/.config/pipewire/pipewire.conf.d/60-studio68c.conf` | Defines "Studio 68c Call Mic". | `dot_config/pipewire/pipewire.conf.d/60-studio68c.conf` |
-| `~/.config/REAPER/reaper.ini` | REAPER's settings, including `linux_audio_nch_in=8` and `linux_audio_nch_out=6`. | none |
+| `~/.config/REAPER/reaper.ini` | REAPER's settings, including `linux_audio_nch_in=9` and `linux_audio_nch_out=6`. | none |
 | `~/scripts/vc_connect.sh` | Routes call and browser audio into REAPER. | `tools/vc_connect.sh` |
+| `~/scripts/phone_connect.sh` | Connects the phone over Bluetooth and routes its calls into REAPER. | `tools/phone_connect.sh` |
 
 Also in this project:
 
@@ -255,17 +309,21 @@ the serial in a name of the form `usb-PreSonus_Studio_68c_0132B680-00`.
    wpctl set-default "$(id_of s68c_call_mic)"
    ```
 
-6. Set REAPER's audio device to JACK with 8 inputs and 6 outputs, and start REAPER with
+6. Set REAPER's audio device to JACK with 9 inputs and 6 outputs, and start REAPER with
    `pw-jack /path/to/REAPER/reaper`. A desktop launcher needs the same prefix in its `Exec=`
    line.
 
-7. Install `vc_connect.sh` in a directory on `PATH`. `~/scripts` is on `PATH` on this machine;
-   on another, add it.
+7. Install `vc_connect.sh` and `phone_connect.sh` in a directory on `PATH`. `~/scripts` is on
+   `PATH` on this machine; on another, add it.
 
    ```sh
    mkdir -p ~/scripts
-   install -m 755 tools/vc_connect.sh ~/scripts/
+   install -m 755 tools/vc_connect.sh tools/phone_connect.sh ~/scripts/
    ```
+
+8. Pair the phone in GNOME Settings > Bluetooth. In the phone's Bluetooth settings for the
+   computer, leave "Phone calls" on; turning "Media audio" off keeps the phone's other sound
+   off the 68c.
 
 ## Checking it
 
@@ -357,7 +415,10 @@ how to check it. The same checks apply to later releases.
    browser stream into REAPER. Check too that a reloaded page lands in REAPER and that `-k`
    restores normal playback, because the remembering is WirePlumber behaviour tested only on
    0.4.
-7. Revisit the UCM profile, deferred on 01/10/2026. A UCM profile describes the card to
+7. With REAPER running and a call in progress, `phone_connect.sh` still moves the far end into
+   REAPER, and the next call follows without the script. PipeWire 1.4 added a telephony
+   interface on D-Bus, which could let the script answer and end calls.
+8. Revisit the UCM profile, deferred on 01/10/2026. A UCM profile describes the card to
    alsa-lib, and on 26.04 PipeWire would turn it into separate named devices such as "Line Out
    3" and "Mic/Line 4". That could replace the call mic file, and contributed to alsa-ucm-conf
    it would give every 68c owner named inputs and outputs without configuration. The agreed design is in `CLAUDE.md`, the
