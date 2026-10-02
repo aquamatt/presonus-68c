@@ -229,7 +229,9 @@ About Bluetooth calls:
 - The phone's call-volume buttons change the far end's level before it reaches REAPER, in
   15 steps: step n gives (n/15)^3 of full level, so one step below maximum is about -1.8 dB
   and step 8 about -16 dB. I keep the call volume at maximum when recording.
-- Not yet tested with a call (02/10/2026).
+- Tested with calls on 02/10/2026: the phone used mSBC, the far end reached REAPER only
+  through "Phone to REAPER", the call mic fed the phone, a new call stream went to "Phone to
+  REAPER" without the script, and `-k` removed the routing and disconnected the phone.
 
 ## Files
 
