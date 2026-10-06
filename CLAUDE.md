@@ -110,9 +110,13 @@ work.
 The repository is public. Check every change for credentials and personal data before it is
 committed. The repository is specific to this setup and is published not as a
 generic solution, but so that others can learn from it (02/10/2026) and get
-information that elluded the owner for so long! Never commit recordings, or raw
+information that eluded the owner for so long! Never commit recordings, or raw
 `pw-dump`, `pw-cli` or `wpctl` output: it lists every device and client on the
 machine, with the user and host names. Never commit Bluetooth addresses, such as the phone's.
+
+Document only what helps another 68c owner. Transient problems, third-party bugs such as a
+browser regression, and details of this machine's other hardware (hubs, webcam, CPU
+temperatures) stay out of the repository, CLAUDE.md included.
 
 ## Decisions
 
