@@ -181,6 +181,11 @@ again.
 the move, and the virtual output is removed. `vc_connect.sh -h` lists the environment variables
 that change its behaviour.
 
+`vc_connect.sh -c` only disconnects hardware from REAPER's in7, in8 and in9: the built-in
+analogue input, a webcam microphone or any other capture device. The call audio and the phone
+audio stay connected. REAPER connects those inputs to capture devices whenever it starts its
+audio engine, for example after a render, so this is the quick way to silence them.
+
 While the routing is in place, those programs play only into REAPER, so they are audible only
 if REAPER monitors in7/in8. Run the script again whenever REAPER restarts its audio engine,
 because REAPER then recreates its ports. If browser audio goes silent after a recording

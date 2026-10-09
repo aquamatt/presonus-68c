@@ -18,6 +18,9 @@ STUDIO_PATTERN="${STUDIO_PATTERN:-Studio 68c}"
 REAPER_LEFT_PORT="${REAPER_LEFT_PORT:-in7}"
 REAPER_RIGHT_PORT="${REAPER_RIGHT_PORT:-in8}"
 
+# REAPER input that phone_connect.sh feeds; -c clears hardware from it as well
+REAPER_PHONE_PORT="${REAPER_PHONE_PORT:-in9}"
+
 # Virtual output (a PipeWire null sink) that collects the call audio. Its monitor
 # outputs feed REAPER. WirePlumber remembers it as the output of each application
 # routed into it, so that application's later streams (a new tab, the video after a
@@ -51,10 +54,17 @@ With -k, the script sends the applications' open streams back to the default
 output, makes WirePlumber forget the move, and removes the virtual output. REAPER's
 $REAPER_LEFT_PORT/$REAPER_RIGHT_PORT are left unconnected.
 
+With -c, the script only disconnects hardware (the built-in analogue input, a
+webcam microphone or any other capture device) from REAPER's $REAPER_LEFT_PORT, $REAPER_RIGHT_PORT and
+$REAPER_PHONE_PORT. REAPER connects those inputs to capture devices whenever it starts its
+audio engine. The call audio from "$SINK_DESCRIPTION" and the phone audio from
+phone_connect.sh stay connected.
+
 Usage:
-  vc_connect.sh [-k] [-h]
+  vc_connect.sh [-c | -k] [-h]
 
 Options:
+  -c, --clear   Disconnect hardware from REAPER's $REAPER_LEFT_PORT/$REAPER_RIGHT_PORT/$REAPER_PHONE_PORT; keep call and phone links.
   -k, --kill    Tear the routing down; applications play to the default output again.
   -h, --help    Show this help.
 
@@ -66,6 +76,8 @@ Environment variables (default in brackets):
                 Regex matching REAPER's JACK ports [$REAPER_PATTERN]
   REAPER_LEFT_PORT, REAPER_RIGHT_PORT
                 REAPER inputs that receive the audio [$REAPER_LEFT_PORT / $REAPER_RIGHT_PORT]
+  REAPER_PHONE_PORT
+                REAPER input that phone_connect.sh feeds, also cleared by -c [$REAPER_PHONE_PORT]
   SINK_NAME, SINK_DESCRIPTION
                 Node name and label of the virtual output [$SINK_NAME / $SINK_DESCRIPTION]
   POLL_INTERVAL
@@ -74,14 +86,21 @@ EOF
 }
 
 teardown=0
+clear_hw=0
 while (($#)); do
   case "$1" in
+    -c|--clear) clear_hw=1 ;;
     -k|--kill) teardown=1 ;;
     -h|--help) help; exit 0 ;;
     *) echo "Unknown option: $1" >&2; echo >&2; help >&2; exit 2 ;;
   esac
   shift
 done
+
+if ((clear_hw && teardown)); then
+  echo "Use -c or -k, not both." >&2
+  exit 2
+fi
 
 for cmd in pw-dump pw-link pw-cli pw-metadata jq; do
   command -v "$cmd" >/dev/null || { echo "Missing: $cmd"; exit 1; }
@@ -111,6 +130,84 @@ set_stream_target() {
   pw-metadata -n default -- "$1" target.node "$2" Spa:Id >/dev/null
   pw-metadata -n default -- "$1" target.object "$3" Spa:Id >/dev/null
 }
+
+# Fills reaper_ports with "id port.name port.alias" for each of REAPER's input ports
+find_reaper_ports() {
+  mapfile -t reaper_ports < <(
+    pw-dump | jq -r --arg pat "$REAPER_PATTERN" '
+      .[] | select(.type=="PipeWire:Interface:Port") |
+      .info.props as $p |
+      select($p["port.direction"]=="in") |
+      select(
+        ($p["port.alias"]//""       | test($pat;"i"))
+        or ($p["object.path"]//""   | test($pat;"i"))
+        or ($p["node.name"]//""     | test($pat;"i"))
+        or ($p["application.name"]//"" | test($pat;"i"))
+      ) |
+      "\(.id) \($p["port.name"]//"") \($p["port.alias"]//"")"
+    '
+  )
+}
+
+# Id of the REAPER input port with the given name; prints nothing if there is none
+reaper_port() {
+  local line pid pname palias
+  for line in "${reaper_ports[@]}"; do
+    read -r pid pname palias <<<"$line"
+    if [[ "$pname" == "$1" || "$palias" == *":$1" ]]; then
+      echo "$pid"
+      return
+    fi
+  done
+}
+
+###############################################################################
+# Clear (-c): disconnect hardware from REAPER's call and phone inputs. REAPER
+# links them to capture devices whenever it starts its audio engine. Only links
+# from physical (hardware) ports are removed, so the call audio from the virtual
+# output and the phone audio from phone_connect.sh stay connected.
+###############################################################################
+
+if ((clear_hw)); then
+  find_reaper_ports
+  clear_ports=()
+  for name in "$REAPER_LEFT_PORT" "$REAPER_RIGHT_PORT" "$REAPER_PHONE_PORT"; do
+    id=$(reaper_port "$name")
+    [[ -n "$id" ]] && clear_ports+=("$id")
+  done
+  if ((${#clear_ports[@]} == 0)); then
+    echo "REAPER $REAPER_LEFT_PORT/$REAPER_RIGHT_PORT/$REAPER_PHONE_PORT not found (is REAPER running, with its audio device open?)"
+    exit 1
+  fi
+
+  mapfile -t hw_links < <(
+    pw-dump | jq -r --argjson ports "[$(IFS=,; echo "${clear_ports[*]}")]" '
+      . as $all |
+      $all[] | select(.type=="PipeWire:Interface:Link") |
+      .info.props as $lp |
+      select(any($ports[]; . == $lp["link.input.port"])) |
+
+      # Only links whose source is a hardware port
+      ($all[] | select(.type=="PipeWire:Interface:Port" and .id == $lp["link.output.port"])) as $outport |
+      select(($outport.info.props["port.physical"] // false | tostring) == "true") |
+
+      "\(.id) \($lp["link.output.port"]) \($lp["link.input.port"]) \($outport.info.props["port.alias"]//"")"
+    '
+  )
+
+  if ((${#hw_links[@]} > 0)); then
+    echo "Disconnecting hardware from REAPER $REAPER_LEFT_PORT/$REAPER_RIGHT_PORT/$REAPER_PHONE_PORT:"
+    for l in "${hw_links[@]}"; do
+      read -r lid outp inp outp_alias <<<"$l"
+      printf "  link %-4s OUT=%-4s (%s) -> %-4s\n" "$lid" "$outp" "$outp_alias" "$inp"
+      pw-cli destroy "$lid" || echo "Failed to delete link $lid"
+    done
+  else
+    echo "No hardware connected to REAPER $REAPER_LEFT_PORT/$REAPER_RIGHT_PORT/$REAPER_PHONE_PORT."
+  fi
+  echo "Done."
+  exit 0
+fi
 
 ###############################################################################
 # Detect Chrome / Zoom ports (playback + monitor), but distinguish them
@@ -228,29 +325,9 @@ fi
 
 echo "Scanning REAPER ports..."
 
-mapfile -t reaper_ports < <(
-  pw-dump | jq -r --arg pat "$REAPER_PATTERN" '
-    .[] | select(.type=="PipeWire:Interface:Port") |
-    .info.props as $p |
-    select($p["port.direction"]=="in") |
-    select(
-      ($p["port.alias"]//""       | test($pat;"i"))
-      or ($p["object.path"]//""   | test($pat;"i"))
-      or ($p["node.name"]//""     | test($pat;"i"))
-      or ($p["application.name"]//"" | test($pat;"i"))
-    ) |
-    "\(.id) \($p["port.name"]//"") \($p["port.alias"]//"")"
-  '
-)
-
-reaper_left=""
-reaper_right=""
-
-for line in "${reaper_ports[@]}"; do
-  read -r pid pname palias <<<"$line"
-  [[ "$pname" == "$REAPER_LEFT_PORT" || "$palias" == *":$REAPER_LEFT_PORT" ]] && reaper_left="$pid"
-  [[ "$pname" == "$REAPER_RIGHT_PORT" || "$palias" == *":$REAPER_RIGHT_PORT" ]] && reaper_right="$pid"
-done
+find_reaper_ports
+reaper_left=$(reaper_port "$REAPER_LEFT_PORT")
+reaper_right=$(reaper_port "$REAPER_RIGHT_PORT")
 
 [[ -z "$reaper_left" ]] && { echo "REAPER $REAPER_LEFT_PORT not found (is REAPER running, with enough JACK inputs?)"; exit 1; }
 [[ -z "$reaper_right" ]] && { echo "REAPER $REAPER_RIGHT_PORT not found (is REAPER running, with enough JACK inputs?)"; exit 1; }
@@ -305,7 +382,7 @@ echo
 ###############################################################################
 # Disconnect anything else feeding the target REAPER inputs, so they carry only
 # the call audio. REAPER auto-connects its inputs in order to hardware capture
-# ports, so with 8 inputs in7/in8 arrive linked to the built-in analogue input.
+# ports, so in7/in8 arrive linked to the built-in analogue input.
 # The virtual output's own links are kept, so re-running causes no dropout.
 ###############################################################################
 
