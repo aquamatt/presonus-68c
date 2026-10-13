@@ -18,12 +18,17 @@ under the MIT licence.
 - `tools/vc_connect.sh`: routes Chrome, Zoom and Zen audio into REAPER; `-h` documents it.
 - `tools/phone_connect.sh`: connects the Android phone over Bluetooth and routes the far end of
   its calls into REAPER; `-h` documents it.
+- `tools/check_call_audio.sh`: checks the routing of call audio (the Call Mic's feed, the
+  defaults, the microphones and sound of Chrome, Zen, Zoom, Firefox and Signal, and REAPER's
+  in7/in8) and repairs it, once with `-f` or continuously as a watchdog with `-w`; `-h`
+  documents it.
 - `tools/read_usb_strings.py`: prints the device's USB string descriptors, including its
   channel names (needs `sudo`). Its output is `usb_strings.txt`.
 
-`60-studio68c.conf`, `vc_connect.sh` and `phone_connect.sh` are copies of installed files,
-which are the ones in use: `~/.config/pipewire/pipewire.conf.d/60-studio68c.conf`,
-`~/scripts/vc_connect.sh` and `~/scripts/phone_connect.sh` (on `PATH`). Keep each pair identical; when one side changes, change the other in the same piece of
+`60-studio68c.conf`, `vc_connect.sh`, `phone_connect.sh` and `check_call_audio.sh` are copies of
+installed files, which are the ones in use: `~/.config/pipewire/pipewire.conf.d/60-studio68c.conf`,
+`~/scripts/vc_connect.sh`, `~/scripts/phone_connect.sh` and `~/scripts/check_call_audio.sh` (on
+`PATH`). Keep each pair identical; when one side changes, change the other in the same piece of
 work.
 
 ## Device
@@ -66,6 +71,13 @@ work.
   REAPER in7/in8, and moves the applications' streams into it by setting
   `target.node`/`target.object` metadata, as pipewire-pulse does. WirePlumber's restore-stream
   then remembers the sink per application, which has been tested only on WirePlumber 0.4.
+- WirePlumber 0.4.17 does not re-create a link that something else removes while both ends
+  exist: the installed `policy-node.lua` (lines 726-731) treats a stream as linked to its target
+  without checking the link. On 13/10/2026 the Call Mic's feed (`capture_AUX3` to
+  `capture.s68c_call_mic`) was found missing during a Meet call in Chrome, and the far end could
+  not hear the owner reliably until it was re-linked; what removed it is not known. The same day
+  Chrome's sound was linked to the 68c's outputs as well as to `vc_to_reaper`, and was heard
+  doubled. `check_call_audio.sh -f` repairs both.
 - `pactl` and pavucontrol are not installed: use `wpctl`, `pw-dump | jq`, `pw-cli` and
   `pw-link`. `wpctl status` shows descriptions; `wpctl status -n` shows node names.
 - Bluetooth: Intel AX210, BlueZ 5.72, no oFono. PipeWire's own backend acts as a hands-free
@@ -101,6 +113,13 @@ work.
   - play a six-channel file: `pw-play --target
     alsa_output.usb-PreSonus_Studio_68c_0132B680-00.pro-output-0 --channel-map
     AUX0,AUX1,AUX2,AUX3,AUX4,AUX5 file.wav`
+- When call audio is reported wrong, run `check_call_audio.sh` first: it only reads, so it is
+  safe during a call. Its `-f` and `-w` change links and defaults, so ask before running
+  either. A running watchdog (`pgrep -af 'check_call_audio.sh -w'`) undoes links and defaults
+  changed for a test within seconds; ask before stopping it. While
+  REAPER is open the 68c's PCMs stay `RUNNING`, so the idle check above cannot show whether a
+  call is on; the call programs' open microphone streams, which `check_call_audio.sh` lists, are
+  a better sign.
 - Keep recordings and other scratch output out of the repository.
 - A call test needs the workstation user at the phone, and `phone_connect.sh -k` disconnects
   the phone: ask before either.

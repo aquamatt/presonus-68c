@@ -37,7 +37,8 @@ writing a new driver.
   this setup adds a mono "Studio 68c Call Mic" input for calls, REAPER started through
   `pw-jack`, `vc_connect.sh` for recording call and browser audio in REAPER, and
   `phone_connect.sh` for recording calls made on my Android phone, which connects to the
-  computer over Bluetooth as a hands-free kit.
+  computer over Bluetooth as a hands-free kit. `check_call_audio.sh` checks that call audio is
+  routed that way and repairs what it can, once or continuously.
 
 The rest of this document describes how the 68c is set up on my machine (Ubuntu 24.04.5) as of
 01/10/2026, how to rebuild that setup, and what to check after moving to Ubuntu 26.04 or later.
@@ -238,6 +239,51 @@ About Bluetooth calls:
   through "Phone to REAPER", the call mic fed the phone, a new call stream went to "Phone to
   REAPER" without the script, and `-k` removed the routing and disconnected the phone.
 
+### Checking call audio
+
+On 13/10/2026 two faults spoilt calls. The call mic had lost its feed from input 4, so Chrome
+sent silence to the other side of the call. And Chrome's sound reached the 68c twice, through
+REAPER and directly, so that I heard it doubled, like a chorus. `check_call_audio.sh` looks
+for both, and for the other ways call audio can drift from the setup described here:
+
+- the call mic exists, and input 4 (`capture_AUX3`) feeds it, alone;
+- the default input is the call mic, and the default output is "Studio 68c Pro";
+- every microphone stream of Chrome, Zen, Zoom, Firefox and Signal is fed by the call mic,
+  alone;
+- every sound stream of those programs plays to one place only, and while one plays into
+  "Vidconf to REAPER", that output feeds REAPER's in7 and in8, without which the call is not
+  heard at all;
+- while "Vidconf to REAPER" exists, nothing else feeds REAPER's in7 or in8. REAPER connects
+  them to the built-in analogue input whenever it starts its audio engine, which mixes that
+  input into the call; `vc_connect.sh -c` and `check_call_audio.sh -f` both remove those links.
+
+Without options it changes nothing, so it is safe during a call. It prints `All correct.` and
+exits with status 0 when everything is as it should be. With `-f` it repairs what it can and
+checks again. It adds missing links, among them those from "Vidconf to REAPER" to REAPER's in7
+and in8, which REAPER drops whenever it restarts its audio engine. It removes extra links,
+keeping "Vidconf to REAPER" for a sound stream that plays to several places (or the 68c, when
+REAPER is not running). And it sets the defaults. It only adds and removes links and sets
+defaults: it never restarts PipeWire or REAPER, and never changes the profile. A program set to
+use another microphone is reported and left alone, because that setting lives in the program:
+choose "Studio 68c Call Mic" there.
+
+With `-w` it stays running as a watchdog until stopped with Ctrl+C: every 2 seconds it checks
+again and repairs what `-f` would, by itself. It acts on a fault only if a second check, a
+second later, finds it too, so that streams that are starting up are left to WirePlumber.
+Each repair, and each fault it cannot repair, is printed with the time, written to the journal
+(`journalctl --user -t check_call_audio`) and shown as a desktop notification, once per
+fault; a fault repaired for the third time is notified again, because something keeps undoing
+the repair. The watchdog undoes deliberate changes too, such as a link made in qpwgraph or
+another default output chosen in GNOME Settings, so I stop it before making them.
+
+The call mic stays silent once its feed is gone because WirePlumber 0.4 does not make a link
+again after something else has removed it while both its ends still exist. Its
+`policy-node.lua` remembers each stream as linked to its target and does not check that the
+link is still there. I do not know what removed the feed on 13/10/2026; a link removed by hand
+in qpwgraph would have the same effect. The feed stays missing until PipeWire restarts or
+`check_call_audio.sh -f` restores it. `check_call_audio.sh -h` lists the environment variables
+that change its behaviour.
+
 ## Files
 
 | Location | Purpose | Copy in this project |
@@ -249,6 +295,7 @@ About Bluetooth calls:
 | `~/.config/REAPER/reaper.ini` | REAPER's settings, including `linux_audio_nch_in=9` and `linux_audio_nch_out=6`. | none |
 | `~/scripts/vc_connect.sh` | Routes call and browser audio into REAPER. | `tools/vc_connect.sh` |
 | `~/scripts/phone_connect.sh` | Connects the phone over Bluetooth and routes its calls into REAPER. | `tools/phone_connect.sh` |
+| `~/scripts/check_call_audio.sh` | Checks the routing of call audio and repairs it, once with `-f` or continuously with `-w`. | `tools/check_call_audio.sh` |
 
 Also in this project:
 
@@ -320,12 +367,12 @@ the serial in a name of the form `usb-PreSonus_Studio_68c_0132B680-00`.
    `pw-jack /path/to/REAPER/reaper`. A desktop launcher needs the same prefix in its `Exec=`
    line.
 
-7. Install `vc_connect.sh` and `phone_connect.sh` in a directory on `PATH`. `~/scripts` is on
-   `PATH` on this machine; on another, add it.
+7. Install `vc_connect.sh`, `phone_connect.sh` and `check_call_audio.sh` in a directory on
+   `PATH`. `~/scripts` is on `PATH` on this machine; on another, add it.
 
    ```sh
    mkdir -p ~/scripts
-   install -m 755 tools/vc_connect.sh tools/phone_connect.sh ~/scripts/
+   install -m 755 tools/vc_connect.sh tools/phone_connect.sh tools/check_call_audio.sh ~/scripts/
    ```
 
 8. Pair the phone in GNOME Settings > Bluetooth. In the phone's Bluetooth settings for the
@@ -333,6 +380,13 @@ the serial in a name of the form `usb-PreSonus_Studio_68c_0132B680-00`.
    off the 68c.
 
 ## Checking it
+
+- Call audio, in one go. This prints `All correct.`; [Checking call
+  audio](#checking-call-audio) describes what it checks.
+
+  ```sh
+  check_call_audio.sh
+  ```
 
 - The active profile. This prints `pro-audio`:
 
@@ -354,6 +408,8 @@ the serial in a name of the form `usb-PreSonus_Studio_68c_0132B680-00`.
   capture.s68c_call_mic:input_AUX3
     |<- alsa_input.usb-PreSonus_Studio_68c_0132B680-00.pro-input-0:capture_AUX3
   ```
+
+  If the second line is missing, the call mic is silent; `check_call_audio.sh -f` restores it.
 
 - The inputs. Record all six while speaking into each input in turn, and stop with Ctrl+C.
   Channel n of the file carries input n, and channels 5 and 6 carry S/PDIF.
@@ -380,6 +436,9 @@ the serial in a name of the form `usb-PreSonus_Studio_68c_0132B680-00`.
   its serial, which `ls /dev/snd/by-id/` shows.
 - After a firmware update, repeat the checks. I know of no change that would affect this
   setup, but new firmware could describe the device differently.
+- WirePlumber 0.4 does not put back a link that something else has removed while both its
+  ends still exist, so a connection removed by hand in qpwgraph stays removed. Removing the
+  call mic's feed leaves calls silent; see [Checking call audio](#checking-call-audio).
 - Untested: S/PDIF in and out, and line outs 3 and 4 at their own jacks. The line outs were
   tested through the headphones with Cue A/B on, which the manual says carry the same signals.
 
